@@ -4,7 +4,7 @@ version: 2
 aliases:
   - &defaults
     docker:
-      - image: circleci/ruby:2.6.0-stretch-node
+      - image: cimg/ruby:3.1.2
         environment: &ruby_environment
           BUNDLE_APP_CONFIG: ./.bundle/
           DB_HOST: localhost
