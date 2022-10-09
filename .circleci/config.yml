@@ -24,7 +24,7 @@ jobs:
           command: "docker build --tag mastodon mastodon"
       - run:
           name: "docker run bundle and precompile"
-          command: "docker run --env SECRET_KEY_BASE=dummy --volume $(pwd)/mastodon/public/assets:/mastodon/public/assets --volume $(pwd)/mastodon/public/packs:/mastodon/public/packs mastodon bundle exec rake assets:precompile"
+          command: "docker run --env SECRET_KEY_BASE=${SECRET_KEY_BASE} --env OPT_SECRET=${OPT_SECRET} --volume $(pwd)/mastodon/public/assets:/mastodon/public/assets --volume $(pwd)/mastodon/public/packs:/mastodon/public/packs mastodon bundle exec rake assets:precompile"
       - run:
           name: "rm docker ignore"
           command: "rm mastodon/.dockerignore"
