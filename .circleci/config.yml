@@ -21,14 +21,8 @@ jobs:
           name: "docker build mastodon"
           command: "docker build --tag mastodon mastodon"
       - run:
-          name: "docker setup bundle directory permissions"
-          command: "sudo docker run mkdir $(pwd)/mastodon/public/assets:/mastodon/public/assets && chown $USER:$USER $(pwd)/mastodon/public/assets:/mastodon/public/assets"
-      - run:
-          name: "docker setup bundle directory permissions"
-          command: "sudo docker run mkdir $(pwd)/mastodon/public/packs:/mastodon/public/packs && chown $USER:$USER $(pwd)/mastodon/public/packs:/mastodon/public/packs"
-      - run:
           name: "docker run bundle and precompile"
-          command: "sudo docker run --env SECRET_KEY_BASE=${SECRET_KEY_BASE} --env PAPERCLIP_SECRET=${PAPERCLIP_SECRET} --env OTP_SECRET=${OTP_SECRET} --volume $(pwd)/mastodon/public/assets:/mastodon/public/assets --volume $(pwd)/mastodon/public/packs:/mastodon/public/packs mastodon bundle exec rake assets:precompile"
+          command: "sudo docker run --env SECRET_KEY_BASE=${SECRET_KEY_BASE} --env PAPERCLIP_SECRET=${PAPERCLIP_SECRET} --env OTP_SECRET=${OTP_SECRET} --volume $(pwd)/mastodon/public/assets:/mastodon/public/assets --volume $(pwd)/mastodon/public/packs:/mastodon/public/packs mastodon npm config set unsafe-perm true && yarn config set unsafe-perm true && bundle exec rake assets:precompile"
       - run:
           name: "rm docker ignore"
           command: "rm mastodon/.dockerignore"
