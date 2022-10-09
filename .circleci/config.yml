@@ -29,22 +29,10 @@ aliases:
       paths:
         - ./mastodon/
 
-  # - &restore_ruby_dependencies
-  #   restore_cache:
-  #     keys:
-  #       - v2-ruby-dependencies-{{ checksum "/tmp/.ruby-version" }}-{{ checksum "Gemfile.lock" }}
-  #       - v2-ruby-dependencies-{{ checksum "/tmp/.ruby-version" }}-
-  #       - v2-ruby-dependencies-
-
   - &install_steps
     steps:
       - checkout
       - *attach_workspace
-
-      - restore_cache:
-          keys:
-            - v1-node-dependencies-{{ checksum "yarn.lock" }}
-            - v1-node-dependencies-
       - run: yarn install --frozen-lockfile
       - save_cache:
           key: v1-node-dependencies-{{ checksum "yarn.lock" }}
@@ -63,17 +51,9 @@ aliases:
   - &install_ruby_dependencies
       steps:
         - *attach_workspace
-
         - *install_system_dependencies
-
         - run: ruby -e 'puts RUBY_VERSION' | tee /tmp/.ruby-version
-        # - *restore_ruby_dependencies
         - run: bundle install --clean --jobs 16 --path ./vendor/bundle/ --retry 3 --with pam_authentication --without development production && bundle clean
-        - save_cache:
-            key: v2-ruby-dependencies-{{ checksum "/tmp/.ruby-version" }}-{{ checksum "Gemfile.lock" }}
-            paths:
-              - ./.bundle/
-              - ./vendor/bundle/
         - persist_to_workspace:
             root: ~/projects/
             paths:
