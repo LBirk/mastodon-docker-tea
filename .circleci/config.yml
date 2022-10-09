@@ -5,7 +5,7 @@ version: 2.1
 # Define a job to be invoked later in a workflow.
 # See: https://circleci.com/docs/2.0/configuration-reference/#jobs
 jobs:
-  say-hello:
+  build-and-deploy-latest-mastodon:
     # Specify the execution environment. You can specify an image from Dockerhub or use one of our Convenience Images from CircleCI's Developer Hub.
     # See: https://circleci.com/docs/2.0/configuration-reference/#docker-machine-macos-windows-executor
     docker:
@@ -15,12 +15,27 @@ jobs:
     steps:
       - checkout
       - run:
-          name: "Say hello"
-          command: "echo Hello, World!"
-
-# Invoke jobs via workflows
-# See: https://circleci.com/docs/2.0/configuration-reference/#workflows
+          name: "git clone mastdon"
+          command: "git clone --branch ${MASTODON_GIT_BRANCH:-master} ${MASTODON_GIT_URL:-https://github.com/tootsuite/mastodon.git}"
+      - run:
+          name: "docker build mastodon"
+          command: "docker build --tag mastodon mastodon"
+      - run:
+          name: "docker run bundle and precompile"
+          command: "docker run --env SECRET_KEY_BASE=dummy --volume $(pwd)/mastodon/public/assets:/mastodon/public/assets --volume $(pwd)/mastodon/public/packs:/mastodon/public/packs mastodon bundle exec rake assets:precompile"
+      - run:
+          name: "rm docker ignore"
+          command: "rm mastodon/.dockerignore"
+      - run:
+          name: "docker build mastodon with full bundle"
+          command: "docker build --tag ${AWS_ECR_URL}:${CIRCLE_BUILD_NUM} mastodon"
+      - run:
+          name: "sign into ecr"
+          command: "eval $(aws ecr get-login)"
+      - run:
+          name: "push mastodon build to ecr"
+          command: "docker push ${AWS_ECR_URL}:${CIRCLE_BUILD_NUM}"
 workflows:
-  say-hello-workflow:
+  build-and-deploy-latest-mastodon-workflow:
     jobs:
-      - say-hello
+      - build-and-deploy-latest-mastodon
