@@ -1,49 +1,235 @@
-# Use the latest 2.1 version of CircleCI pipeline process engine.
-# See: https://circleci.com/docs/2.0/configuration-reference
-version: 2.1
+#Config.yml for circleci to dockerhub
+version: 2
 
-# Define a job to be invoked later in a workflow.
-# See: https://circleci.com/docs/2.0/configuration-reference/#jobs
-jobs:
-  build-and-deploy-latest-mastodon:
-    machine:
-      image: ubuntu-2204:2022.04.2
-    # Specify the execution environment. You can specify an image from Dockerhub or use one of our Convenience Images from CircleCI's Developer Hub.
-    # See: https://circleci.com/docs/2.0/configuration-reference/#docker-machine-macos-windows-executor
-    # docker:
-    #   - image: cimg/base:stable
-    # Add steps to the job
-    # See: https://circleci.com/docs/2.0/configuration-reference/#steps
+aliases:
+  - &defaults
+    docker:
+      - image: circleci/ruby:2.6.0-stretch-node
+        environment: &ruby_environment
+          BUNDLE_APP_CONFIG: ./.bundle/
+          DB_HOST: localhost
+          DB_USER: root
+          RAILS_ENV: test
+          PARALLEL_TEST_PROCESSORS: 4
+          ALLOW_NOPAM: true
+          CONTINUOUS_INTEGRATION: true
+          DISABLE_SIMPLECOV: true
+          PAM_ENABLED: true
+          PAM_DEFAULT_SERVICE: pam_test
+          PAM_CONTROLLED_SERVICE: pam_test_controlled
+    working_directory: ~/projects/mastodon/
+
+  - &attach_workspace
+    attach_workspace:
+      at: ~/projects/
+
+  - &persist_to_workspace
+    persist_to_workspace:
+      root: ~/projects/
+      paths:
+        - ./mastodon/
+
+  - &restore_ruby_dependencies
+    restore_cache:
+      keys:
+        - v2-ruby-dependencies-{{ checksum "/tmp/.ruby-version" }}-{{ checksum "Gemfile.lock" }}
+        - v2-ruby-dependencies-{{ checksum "/tmp/.ruby-version" }}-
+        - v2-ruby-dependencies-
+
+  - &install_steps
     steps:
       - checkout
+      - *attach_workspace
+
+      - restore_cache:
+          keys:
+            - v1-node-dependencies-{{ checksum "yarn.lock" }}
+            - v1-node-dependencies-
+      - run: yarn install --frozen-lockfile
+      - save_cache:
+          key: v1-node-dependencies-{{ checksum "yarn.lock" }}
+          paths:
+            - ./node_modules/
+
+      - *persist_to_workspace
+
+  - &install_system_dependencies
+      run:
+        name: Install system dependencies
+        command: |
+          sudo apt-get update
+          sudo apt-get install -y libicu-dev libidn11-dev libprotobuf-dev protobuf-compiler
+
+  - &install_ruby_dependencies
+      steps:
+        - *attach_workspace
+
+        - *install_system_dependencies
+
+        - run: ruby -e 'puts RUBY_VERSION' | tee /tmp/.ruby-version
+        - *restore_ruby_dependencies
+        - run: bundle install --clean --jobs 16 --path ./vendor/bundle/ --retry 3 --with pam_authentication --without development production && bundle clean
+        - save_cache:
+            key: v2-ruby-dependencies-{{ checksum "/tmp/.ruby-version" }}-{{ checksum "Gemfile.lock" }}
+            paths:
+              - ./.bundle/
+              - ./vendor/bundle/
+        - persist_to_workspace:
+            root: ~/projects/
+            paths:
+                - ./mastodon/.bundle/
+                - ./mastodon/vendor/bundle/
+
+  - &test_steps
+      steps:
+        - *attach_workspace
+
+        - *install_system_dependencies
+        - run: sudo apt-get install -y ffmpeg
+
+        - run:
+            name: Prepare Tests
+            command: ./bin/rails parallel:create parallel:load_schema parallel:prepare
+        - run:
+            name: Run Tests
+            command: ./bin/retry bundle exec parallel_test ./spec/ --group-by filesize --type rspec
+
+jobs:
+  install:
+    <<: *defaults
+    <<: *install_steps
+
+  install-ruby2.6:
+    <<: *defaults
+    <<: *install_ruby_dependencies
+
+  install-ruby2.5:
+    <<: *defaults
+    docker:
+      - image: circleci/ruby:2.5.3-stretch-node
+        environment: *ruby_environment
+    <<: *install_ruby_dependencies
+
+  install-ruby2.4:
+    <<: *defaults
+    docker:
+      - image: circleci/ruby:2.4.5-stretch-node
+        environment: *ruby_environment
+    <<: *install_ruby_dependencies
+
+  build:
+    <<: *defaults
+    steps:
+      - *attach_workspace
+      - *install_system_dependencies
+      - run: ./bin/rails assets:precompile
+      - persist_to_workspace:
+          root: ~/projects/
+          paths:
+              - ./mastodon/public/assets
+              - ./mastodon/public/packs-test/
+
+  test-ruby2.6:
+    <<: *defaults
+    docker:
+      - image: circleci/ruby:2.6.0-stretch-node
+        environment: *ruby_environment
+      - image: circleci/postgres:10.6-alpine
+        environment:
+          POSTGRES_USER: root
+      - image: circleci/redis:5.0.3-alpine3.8
+    <<: *test_steps
+
+  test-ruby2.5:
+    <<: *defaults
+    docker:
+      - image: circleci/ruby:2.5.3-stretch-node
+        environment: *ruby_environment
+      - image: circleci/postgres:10.6-alpine
+        environment:
+          POSTGRES_USER: root
+      - image: circleci/redis:4.0.12-alpine
+    <<: *test_steps
+
+  test-ruby2.4:
+    <<: *defaults
+    docker:
+      - image: circleci/ruby:2.4.5-stretch-node
+        environment: *ruby_environment
+      - image: circleci/postgres:10.6-alpine
+        environment:
+          POSTGRES_USER: root
+      - image: circleci/redis:4.0.12-alpine
+    <<: *test_steps
+
+  test-webui:
+    <<: *defaults
+    docker:
+      - image: circleci/node:8.15.0-stretch
+    steps:
+      - *attach_workspace
+      - run: ./bin/retry yarn test:jest
+
+  check-i18n:
+    <<: *defaults
+    steps:
+      - *attach_workspace
+      - run: bundle exec i18n-tasks check-normalized
+      - run: bundle exec i18n-tasks unused -l en
+      - run: bundle exec i18n-tasks check-consistent-interpolations
+  publish:
+    <<: *defaults
+    steps:
+      - setup_remote_docker: 
+      - *attach_workspace
       - run:
-          name: "git clone mastdon"
-          command: "git clone --branch ${MASTODON_GIT_BRANCH:-master} ${MASTODON_GIT_URL:-https://github.com/tootsuite/mastodon.git}"
-      - run:
-          name: "docker build mastodon"
-          command: "docker build --tag mastodon mastodon"
-      - run:
-          name: "docker setup bundle directory permissions"
-          command: "docker run mkdir $(pwd)/mastodon/public/assets:/mastodon/public/assets && chown $USER:$USER $(pwd)/mastodon/public/assets:/mastodon/public/assets"
-      - run:
-          name: "docker setup bundle directory permissions"
-          command: "docker run mkdir $(pwd)/mastodon/public/packs:/mastodon/public/packs && chown $USER:$USER $(pwd)/mastodon/public/packs:/mastodon/public/packs"
-      - run:
-          name: "docker run bundle and precompile"
-          command: "docker run --env SECRET_KEY_BASE=${SECRET_KEY_BASE} --env PAPERCLIP_SECRET=${PAPERCLIP_SECRET} --env OTP_SECRET=${OTP_SECRET} --volume $(pwd)/mastodon/public/assets:/mastodon/public/assets --volume $(pwd)/mastodon/public/packs:/mastodon/public/packs mastodon bundle exec rake assets:precompile"
-      - run:
-          name: "rm docker ignore"
-          command: "rm mastodon/.dockerignore"
-      - run:
-          name: "docker build mastodon with full bundle"
-          command: "docker build --env SECRET_KEY_BASE=${SECRET_KEY_BASE} --env PAPERCLIP_SECRET=${PAPERCLIP_SECRET} --env OTP_SECRET=${OTP_SECRET} --tag ${AWS_ECR_URL}:${CIRCLE_BUILD_NUM} mastodon"
-      - run:
-          name: "sign into ecr"
-          command: "eval $(aws ecr get-login)"
-      - run:
-          name: "push mastodon build to ecr"
-          command: "docker push ${AWS_ECR_URL}:${CIRCLE_BUILD_NUM}"
+          name: Login to DockerHub
+          command: docker login -u $DOCKER_USER -p $DOCKER_PASS
+      - run: docker build -t $DOCKER_USER/masto:$CIRCLE_BUILD_NUM .
+      - run: docker push $DOCKER_USER/masto:$CIRCLE_BUILD_NUM
+      - run: ssh -o StrictHostKeyChecking=no ubuntu@$HOSTNAME "sed -i 's/masto:[0-9][0-9]*/masto:$CIRCLE_BUILD_NUM/g' ~/CircleCI/docker-compose.yml"
+      - run: ssh -o StrictHostKeyChecking=no ubuntu@$HOSTNAME "/bin/bash ~/CircleCI/deploy.sh"
+
 workflows:
-  build-and-deploy-latest-mastodon-workflow:
+  version: 2
+  build-and-test:
     jobs:
-      - build-and-deploy-latest-mastodon
+      - install
+      - install-ruby2.6:
+          requires:
+            - install
+      - install-ruby2.5:
+          requires:
+            - install
+            - install-ruby2.6
+      - install-ruby2.4:
+          requires:
+            - install
+            - install-ruby2.6
+      - build:
+          requires:
+            - install-ruby2.6
+      - test-ruby2.6:
+          requires:
+            - install-ruby2.6
+            - build
+      - test-ruby2.5:
+          requires:
+            - install-ruby2.5
+            - build
+      - test-ruby2.4:
+          requires:
+            - install-ruby2.4
+            - build
+      - test-webui:
+          requires:
+            - install
+      - check-i18n:
+          requires:
+            - install-ruby2.6
+      - publish:
+          requires:
+            - test-ruby2.6
+          filters:
+            branches:
+              only: master
